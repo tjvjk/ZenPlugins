@@ -87,7 +87,7 @@ describe('[model] MyAmeria transport', () => {
     const failure = new Error('modeled transport failure')
     fetchMock.get(/history/, { throws: failure })
     const persist = jest.fn(async () => {})
-    const result = await authenticate(preferences, auth, persist)
+    const result = await authenticate({ login: 'fixture-user', password: 'fixture-password' }, auth, persist)
     expect(persist).toHaveBeenCalledWith(result)
     expect(result.refreshToken).toBe('new-refresh')
     await expect(fetchTransactions(result, { source: 'history' }, new Date('2026-10-01'), new Date('2026-10-02'))).rejects.toBe(failure)
@@ -98,7 +98,7 @@ describe('[model] MyAmeria transport', () => {
     const failure = new Error('modeled authentication transport failure')
     fetchMock.post(/openid-connect\/token/, { throws: failure })
     const persist = jest.fn(async () => {})
-    await expect(authenticate(preferences, auth, persist)).rejects.toBe(failure)
+    await expect(authenticate({ login: 'fixture-user', password: 'fixture-password' }, auth, persist)).rejects.toBe(failure)
     expect(persist).not.toHaveBeenCalled()
   })
 

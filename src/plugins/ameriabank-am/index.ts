@@ -4,12 +4,12 @@ import { convertAccounts, convertTransactions, verifyDepositHistory } from './co
 import { Preferences } from './models'
 
 /** Import verified MyAmeria accounts and operations, persisting rotated authorization first. */
-export const scrape: ScrapeFunc<Preferences> = async ({ preferences, fromDate, toDate }) => {
+export const scrape: ScrapeFunc<Preferences> = async ({ preferences, fromDate, toDate, isInBackground }) => {
   ZenMoney.locale = 'ru'
   const auth = await authenticate(preferences, ZenMoney.getData('auth'), async auth => {
     ZenMoney.setData('auth', auth)
     ZenMoney.saveData()
-  })
+  }, isInBackground)
   const requestEnd = toDate ?? nextArmenianMidnight()
   const graph = await fetchAccountGraph(auth)
   const products = await fetchProducts(auth, graph)

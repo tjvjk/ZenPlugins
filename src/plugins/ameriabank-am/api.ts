@@ -1,33 +1,89 @@
 import { Debug } from '../../common/debug'
-import { InvalidPreferencesError } from '../../errors'
+import { InvalidLoginOrPasswordError, InvalidPreferencesError, TemporaryError, UserInteractionError } from '../../errors'
+import { delay } from '../../common/utils'
+import { v4 as uuid } from 'uuid'
+import { authorizationCode, deviceCddc, loginPage, pageTemplate, pushPage, tokenNonce } from './authPage'
 import get, { getBoolean, getNumber, getString } from '../../types/get'
 import * as transport from './fetchApi'
-import { AccountGraph, Auth, ExchangeDetails, HistoryPlan, PersistAuth, Preferences } from './models'
+import { AccountGraph, Auth, ExchangeDetails, HistoryPlan, PersistAuth, Preferences, RefreshCredentials } from './models'
 import { array, text } from './parse'
 
-/** Refresh and persist credentials, preferring the saved rotated token. */
-export async function authenticate (preferences: Preferences, stored: unknown, persist: PersistAuth): Promise<Auth> {
-  const savedToken = get(stored, 'refreshToken')
-  const credentials: Preferences = typeof savedToken === 'string' && savedToken.length > 0
-    ? {
-        refreshToken: savedToken,
-        clientAuth: getString({ value: get(stored, 'clientAuth') }, 'value'),
-        clientId: getString({ value: get(stored, 'clientId') }, 'value')
-      }
-    : preferences
-  for (const key of ['refreshToken', 'clientAuth', 'clientId'] as const) {
-    if (typeof credentials[key] !== 'string' || credentials[key].trim().length === 0) {
-      throw new InvalidPreferencesError('Заполните refresh token, Client Auth и Client-Id из сессии MyAmeria.')
-    }
+/** Refresh compatible saved authorization before considering an interactive credential login. */
+export async function authenticate (preferences: Preferences, stored: unknown, persist: PersistAuth, isInBackground = false): Promise<Auth> {
+  const refreshToken = get(stored, 'refreshToken')
+  const clientAuth = get(stored, 'clientAuth')
+  const clientId = get(stored, 'clientId')
+  if (typeof refreshToken === 'string' && refreshToken.length > 0 && typeof clientAuth === 'string' && clientAuth.length > 0) {
+    const credentials: RefreshCredentials = { refreshToken, clientAuth, clientId: typeof clientId === 'string' ? clientId : '' }
+    const refreshed = await transport.refreshToken(credentials)
+    if (refreshed.kind === 'token') return await confirmedAuth(refreshed.token, credentials, persist)
+    console.debug('MyAmeria refresh grant rejected, starting credential login')
   }
-  const token = await transport.refreshToken(credentials)
-  const accessToken = getString({ value: get(token, 'access_token') }, 'value')
-  const refreshToken = getString({ value: get(token, 'refresh_token') }, 'value')
-  const expiresIn = getNumber({ value: get(token, 'expires_in') }, 'value')
-  console.assert(accessToken.length > 0 && refreshToken.length > 0 && Number.isFinite(expiresIn) && expiresIn > 0, 'Invalid MyAmeria token response')
-  const auth: Auth = { ...credentials, accessToken, refreshToken, expiresAt: Date.now() + expiresIn * 1000 }
+  return await coldAuth(preferences, persist, isInBackground)
+}
+
+/** Initiate the captured credential-and-push flow only when user interaction is available. */
+async function coldAuth (preferences: Preferences, persist: PersistAuth, isInBackground: boolean): Promise<Auth> {
+  if (typeof preferences.login !== 'string' || preferences.login.trim().length === 0 || typeof preferences.password !== 'string' || preferences.password.length === 0) {
+    throw new InvalidPreferencesError('Укажите логин и пароль MyAmeria')
+  }
+  if (isInBackground) throw new UserInteractionError()
+  const clientAuth = await transport.fetchClientAuthorization()
+  const state = uuid()
+  const nonce = uuid()
+  const initial = loginPage(await transport.fetchAuthorizationPage(state, nonce))
+  console.assert(initial.error === '', 'MyAmeria authorization page contains an unexpected error', { code: initial.error })
+  const cddc = deviceCddc()
+  const html = await transport.submitCredentials(initial.action, preferences, cddc)
+  if (pageTemplate(html) === 'login') {
+    const rejected = loginPage(html)
+    if (rejected.error === 'login.errors.wrongPassword') throw new InvalidLoginOrPasswordError('Неверный логин или пароль MyAmeria')
+    console.assert(false, 'Unexpected MyAmeria login rejection', { code: rejected.error })
+  }
+  const page = pushPage(html)
+  await ZenMoney.alert('Подтвердите вход в приложении MyAmeria, затем вернитесь в Дзен-мани и нажмите ОК')
+  await awaitPush(page.sessionId)
+  const code = authorizationCode(await transport.confirmLogin(page, cddc), state)
+  const token = await transport.exchangeToken(code, clientAuth)
+  const idToken = authString(token, 'id_token')
+  console.assert(tokenNonce(idToken) === nonce, 'MyAmeria token nonce mismatch')
+  return await confirmedAuth(token, { clientAuth, clientId: '', refreshToken: '' }, persist)
+}
+
+/** Poll at the official client's interval while preserving unknown errors and states. */
+async function awaitPush (sessionId: string): Promise<void> {
+  const deadline = Date.now() + 120000
+  for (let attempt = 0; attempt < 40 && Date.now() < deadline; attempt++) {
+    const response = await transport.fetchPushStatus(sessionId)
+    console.assert(get(response, 'status') === 'success', 'MyAmeria confirmation envelope is unsuccessful')
+    const status = getString({ value: get(response, 'data.sessionStatus') }, 'value')
+    if (status === 'accepted') return
+    if (status === 'refused') throw new TemporaryError('Вход отклонён в приложении MyAmeria, повторите синхронизацию и подтвердите вход')
+    console.assert(status === 'pending', 'Unexpected MyAmeria confirmation status', { status })
+    await delay(3000)
+  }
+  throw new Error('MyAmeria confirmation polling deadline exceeded')
+}
+
+/** Persist valid rotated tokens before discovering the bank client or loading any financial data. */
+async function confirmedAuth (token: unknown, credentials: RefreshCredentials, persist: PersistAuth): Promise<Auth> {
+  const accessToken = authString(token, 'access_token')
+  const refreshToken = authString(token, 'refresh_token')
+  const expiresIn = get(token, 'expires_in')
+  console.assert(accessToken.length > 0 && refreshToken.length > 0 && typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0, 'Invalid MyAmeria token response')
+  const auth: Auth = { ...credentials, accessToken, refreshToken, expiresAt: Date.now() + (expiresIn as number) * 1000 }
   await persist(auth)
-  return auth
+  if (auth.clientId.length > 0) return auth
+  const resolved: Auth = { ...auth, clientId: await transport.fetchClientId(accessToken) }
+  await persist(resolved)
+  return resolved
+}
+
+/** Narrow secret token fields without including their values in assertion diagnostics. */
+function authString (token: unknown, key: string): string {
+  const value = get(token, key)
+  console.assert(typeof value === 'string' && value.length > 0, 'Invalid MyAmeria token field', { key })
+  return value as string
 }
 
 /** Load product details in the order of the complete account graph. */

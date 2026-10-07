@@ -1,17 +1,39 @@
 import { Account } from '../../types/zenmoney'
 
-/** Credentials supplied by the MyAmeria browser session. */
+/** Login credentials used only when saved authorization cannot be refreshed. */
 export interface Preferences {
+  readonly login: string
+  readonly password: string
+}
+
+/** Refresh artifacts retained from a successful browser-compatible authorization. */
+export interface RefreshCredentials {
   readonly refreshToken: string
   readonly clientAuth: string
   readonly clientId: string
 }
 
-/** Rotated credentials persisted immediately after authentication. */
-export interface Auth extends Preferences {
+/** Confirmed tokens persisted before client discovery or account loading. */
+export interface Auth extends RefreshCredentials {
   readonly accessToken: string
   readonly expiresAt: number
 }
+
+/** Bank login action and an optional investigated credential rejection code. */
+export interface LoginPage {
+  readonly action: string
+  readonly error: string
+}
+
+/** OneSpan application confirmation form and external request identity. */
+export interface PushPage {
+  readonly action: string
+  readonly evaluatedRequestId: string
+  readonly sessionId: string
+}
+
+/** A token response or a confirmed rejection of the refresh grant. */
+export type RefreshResult = { readonly kind: 'token', readonly token: unknown } | { readonly kind: 'rejected' }
 
 /** Deposit identity linking the account to its history endpoint. */
 export interface DepositSource {

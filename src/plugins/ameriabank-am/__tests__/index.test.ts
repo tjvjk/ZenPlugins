@@ -10,9 +10,9 @@ const { scrape }: typeof import('../index') = jest.requireActual('../index')
 const capture: BankCapture = JSON.parse(readFileSync(join(__dirname, './fixtures/capture.json'), 'utf8'))
 
 describe('import entrypoint using the authorized anonymized capture', () => {
-  const preferences: Preferences = { refreshToken: 'seed', clientAuth: 'client-auth', clientId: 'client-id' }
+  const preferences: Preferences = { login: 'fixture-user', password: 'fixture-password' }
   const args = { preferences, fromDate: new Date('2026-07-01T00:00:00+04:00'), isFirstRun: true, isInBackground: true }
-  const auth: Auth = { ...preferences, refreshToken: 'rotated', accessToken: 'access', expiresAt: 1 }
+  const auth: Auth = { clientAuth: 'client-auth', clientId: 'client-id', refreshToken: 'rotated', accessToken: 'access', expiresAt: 1 }
   const previousHost = Object.getOwnPropertyDescriptor(global, 'ZenMoney')
   const setData = jest.fn()
   const saveData = jest.fn()
@@ -30,6 +30,8 @@ describe('import entrypoint using the authorized anonymized capture', () => {
     })
     jest.mocked(api.fetchExchangeDetails).mockResolvedValue(capture.details)
     jest.mocked(api.fetchDepositTransactions).mockResolvedValue(capture.depositHistory)
+    setData.mockClear()
+    saveData.mockClear()
     isAccountSkipped.mockReturnValue(false)
   })
 
@@ -71,5 +73,30 @@ describe('import entrypoint using the authorized anonymized capture', () => {
     await expect(scrape(args)).rejects.toBe(failure)
     expect(setData).toHaveBeenCalledWith('auth', auth)
     expect(saveData).toHaveBeenCalledTimes(1)
+  })
+
+  // Model two confirmed auth updates followed by a data-loading failure.
+  it('[model] persists the latest client discovery update before account loading fails', async () => {
+    const failure = new Error('Modeled account loading failure')
+    const initial = { ...auth, clientId: '' }
+    jest.mocked(api.authenticate).mockImplementation(async (_preferences, _stored, persist) => {
+      await persist(initial)
+      await persist(auth)
+      return auth
+    })
+    jest.mocked(api.fetchAccountGraph).mockRejectedValue(failure)
+    await expect(scrape({ ...args, isInBackground: false })).rejects.toBe(failure)
+    expect(setData.mock.calls).toEqual([['auth', initial], ['auth', auth]])
+    expect(saveData).toHaveBeenCalledTimes(2)
+    expect(api.authenticate).toHaveBeenCalledWith(preferences, undefined, expect.any(Function), false)
+  })
+
+  it('[model] preserves prior state without saving after a hot-auth failure', async () => {
+    const failure = new Error('Modeled hot authentication failure')
+    jest.mocked(api.authenticate).mockRejectedValue(failure)
+    await expect(scrape(args)).rejects.toBe(failure)
+    expect(setData).not.toHaveBeenCalled()
+    expect(saveData).not.toHaveBeenCalled()
+    expect(api.fetchAccountGraph).not.toHaveBeenCalled()
   })
 })

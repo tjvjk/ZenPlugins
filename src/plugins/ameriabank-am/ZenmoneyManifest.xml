@@ -2,8 +2,8 @@
 <provider>
     <id>ameriabank-am</id>
     <company>15472</company>
-    <description>Import your Ameriabank accounts, balances and transactions into Zenmoney. Requires credentials from your MyAmeria web session.</description>
-    <version>0.2</version>
+    <description>Импорт счетов и операций Ameriabank в Дзен-мани. Введите логин и пароль MyAmeria и подтвердите вход в приложении MyAmeria.</description>
+    <version>0.3</version>
     <build>1</build>
     <modular>true</modular>
     <files>
