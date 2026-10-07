@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen>
+    <EditTextPreference key="refreshToken" obligatory="true" inputType="textPassword" title="Refresh token MyAmeria" dialogTitle="Refresh token MyAmeria" positiveButtonText="ОК" negativeButtonText="Отмена" summary="||***********" />
+    <EditTextPreference key="clientAuth" obligatory="true" inputType="textPassword" title="Client Auth" dialogTitle="Client Auth" dialogMessage="Значение заголовка Authorization запроса token без префикса Basic." positiveButtonText="ОК" negativeButtonText="Отмена" summary="||***********" />
+    <EditTextPreference key="clientId" obligatory="true" inputType="textPassword" title="Client-Id" dialogTitle="Client-Id" positiveButtonText="ОК" negativeButtonText="Отмена" summary="||***********" />
+    <EditTextPreference key="startDate" obligatory="true" inputType="date" title="Дата начала проверки истории" defaultValue="2026-10-01T00:00:00.000+04:00" dialogTitle="Дата начала проверки истории" positiveButtonText="ОК" negativeButtonText="Отмена" summary="|Дата начала|{@s}" />
+</PreferenceScreen>

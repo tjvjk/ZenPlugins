@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<provider>
+    <id>ameriabank-am</id>
+    <company>15472</company>
+    <description>Тестовое подключение MyAmeria через Bootloader. Проверяет токен и загружает данные для разработки; импорт операций ещё не включён.</description>
+    <version>0.1</version>
+    <build>1</build>
+    <modular>true</modular>
+    <files>
+        <js>index.js</js>
+        <preferences>preferences.xml</preferences>
+    </files>
+    <codeRequired>false</codeRequired>
+</provider>
