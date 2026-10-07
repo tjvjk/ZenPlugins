@@ -2,8 +2,8 @@
 <provider>
     <id>ameriabank-am</id>
     <company>15472</company>
-    <description>Тестовое подключение MyAmeria через Bootloader. Проверяет токен и загружает данные для разработки; импорт операций ещё не включён.</description>
-    <version>0.1</version>
+    <description>Import your Ameriabank accounts, balances and transactions into Zenmoney. Requires credentials from your MyAmeria web session.</description>
+    <version>0.2</version>
     <build>1</build>
     <modular>true</modular>
     <files>
