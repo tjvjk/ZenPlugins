@@ -70,8 +70,9 @@ it('includes both interval boundaries and imposes no upper filter when absent', 
 })
 
 it('checks the complete deposit ledger and rejects unverified older deposit movements', () => {
-  expect(() => verifyDepositHistory(capture.depositHistory, fromDate)).not.toThrow()
-  expect(() => verifyDepositHistory(capture.depositHistory, new Date('2025-01-01'))).toThrow('requires verified currency and identity')
+  const deposit = accounts.filter(a => a.id === 'deposit:1010756356')[0]
+  expect(verifyDepositHistory(capture.depositHistory, capture.history, deposit, fromDate)).toEqual({})
+  expect(() => verifyDepositHistory(capture.depositHistory, capture.history, deposit, new Date('2025-01-01'))).toThrow()
 })
 
 it('preserves salary as income with its purpose and sender', () => {

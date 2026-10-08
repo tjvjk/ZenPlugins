@@ -10,21 +10,34 @@ export const scrape: ScrapeFunc<Preferences> = async ({ preferences, fromDate, t
     ZenMoney.setData('auth', auth)
     ZenMoney.saveData()
   }, isInBackground)
-  const requestEnd = toDate ?? nextArmenianMidnight()
   const graph = await fetchAccountGraph(auth)
   const products = await fetchProducts(auth, graph)
   const { accounts, fetchParams } = convertAccounts(graph, products)
   if (accounts.every(account => ZenMoney.isAccountSkipped(account.id))) return { accounts, transactions: [] }
-  const history = await fetchTransactions(auth, fetchParams, fromDate, requestEnd)
-  for (const source of fetchParams.deposits) {
-    if (!ZenMoney.isAccountSkipped(source.accountId)) {
-      verifyDepositHistory(await fetchDepositTransactions(auth, source.productId), fromDate, toDate)
+  const deposits = fetchParams.deposits.filter(source => !ZenMoney.isAccountSkipped(source.accountId))
+  const requestStart = deposits.length > 0 ? armenianMidnight(fromDate) : fromDate
+  const requestEnd = toDate == null ? nextArmenianMidnight() : deposits.length > 0 ? new Date(armenianMidnight(toDate).getTime() + 86400000) : toDate
+  const history = await fetchTransactions(auth, fetchParams, requestStart, requestEnd)
+  const depositMovements: Record<string, string> = {}
+  for (const source of deposits) {
+    const account = accounts.find(account => account.id === source.accountId)
+    if (account === undefined) throw new Error('MyAmeria deposit history account is missing')
+    const movements = verifyDepositHistory(await fetchDepositTransactions(auth, source.productId), history, account, fromDate, toDate)
+    for (const [id, accountId] of Object.entries(movements)) {
+      console.assert(depositMovements[id] === undefined || depositMovements[id] === accountId, 'Conflicting MyAmeria deposit transfer identity')
+      depositMovements[id] = accountId
     }
   }
   const details = await fetchExchangeDetails(auth, history)
-  const transactions = convertTransactions(history, accounts, details, fromDate, toDate)
+  const transactions = convertTransactions(history, accounts, details, fromDate, toDate, depositMovements)
     .filter(transaction => transaction.movements.some(isSelectedMovement))
   return { accounts, transactions }
+}
+
+/** Fetch complete Armenian days so date-only deposit events can resolve their actual bank timestamps. */
+function armenianMidnight (date: Date): Date {
+  const offset = 4 * 3600000
+  return new Date(Math.floor((date.getTime() + offset) / 86400000) * 86400000 - offset)
 }
 
 /** Supply the finite history endpoint boundary at the next Armenian midnight. */

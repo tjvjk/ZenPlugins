@@ -9,7 +9,8 @@ export function convertTransactions (
   accounts: readonly Account[],
   details: ExchangeDetails,
   fromDate: Date,
-  toDate?: Date
+  toDate?: Date,
+  depositMovements: Readonly<Record<string, string>> = {}
 ): Transaction[] {
   const byId = new Map(accounts.map(account => [account.id, account]))
   const seen = new Map<string, string>()
@@ -19,7 +20,7 @@ export function convertTransactions (
     const date = new Date(number(record, 'transactionDate'))
     console.assert(Number.isFinite(date.getTime()), 'Invalid MyAmeria transaction date')
     if (date < fromDate || (toDate != null && date > toDate)) continue
-    const transaction = convertTransaction(record, id, date, byId, details)
+    const transaction = convertTransaction(record, id, date, byId, details, depositMovements[id])
     const signature = JSON.stringify(transaction)
     const previous = seen.get(id)
     console.assert(previous === undefined || previous === signature, 'Conflicting MyAmeria history identifier')
@@ -29,16 +30,6 @@ export function convertTransactions (
     }
   }
   return result
-}
-
-/** Reject in-range deposit ledger entries whose currency and stable identity remain unverified. */
-export function verifyDepositHistory (records: readonly unknown[], fromDate: Date, toDate?: Date): void {
-  for (const record of records) {
-    const date = new Date(text(record, 'operationDate'))
-    console.assert(Number.isFinite(date.getTime()), 'Invalid MyAmeria deposit operation date')
-    if (date < fromDate || (toDate != null && date > toDate)) continue
-    throw new Error('MyAmeria deposit movement requires verified currency and identity')
-  }
 }
 
 /** Card descriptors identify merchants more accurately than processor beneficiary names. */
@@ -71,13 +62,16 @@ interface TransactionContext {
 }
 
 /** Validate settled amounts and resolve the transaction accounts before classification. */
-function transactionContext (record: unknown, id: string, byId: ReadonlyMap<string, Account>): TransactionContext {
+function transactionContext (record: unknown, id: string, byId: ReadonlyMap<string, Account>, depositAccountId?: string): TransactionContext {
   console.assert(text(record, 'status') === 'APPROVED', 'Unsupported MyAmeria transaction status')
   const direction = flowDirection(record)
   const debit = byId.get(text(record, 'debitAccountNumber'))
-  const credit = byId.get(text(record, 'creditAccountNumber'))
+  const originalCredit = byId.get(text(record, 'creditAccountNumber'))
+  console.assert(depositAccountId === undefined || originalCredit === undefined || originalCredit.id === depositAccountId, 'MyAmeria deposit transfer contradicts a known credit account')
+  const credit = depositAccountId === undefined ? originalCredit : byId.get(depositAccountId)
   const own = direction === 'EXPENSE' ? debit : credit
   console.assert(own !== undefined, 'MyAmeria movement account is missing')
+  console.assert(depositAccountId === undefined || credit?.type === 'deposit', 'MyAmeria deposit movement account is missing')
   if (own === undefined) throw new Error('MyAmeria movement account is missing')
   const value = number(record, 'settledAmount.value')
   const currency = text(record, 'settledAmount.currency')
@@ -114,9 +108,10 @@ function convertTransaction (
   id: string,
   date: Date,
   byId: ReadonlyMap<string, Account>,
-  details: ExchangeDetails
+  details: ExchangeDetails,
+  depositAccountId?: string
 ): Transaction {
-  const context = transactionContext(record, id, byId)
+  const context = transactionContext(record, id, byId, depositAccountId)
   const { internal, type, direction, descriptor } = context
   const preserveComment = internal || type !== 'card' || direction === 'INCOME'
   return {
@@ -140,7 +135,8 @@ function transactionMovements (context: TransactionContext, details: ExchangeDet
 /** Build both own-account movements using verified exchange amounts when currencies differ. */
 function internalTransferMovements (context: TransactionContext, details: ExchangeDetails): [Movement, Movement] {
   const { id, type, debit, credit, direction, value, sign, movement } = context
-  console.assert(type === 'exchange' || type === 'transfer:between-own-accounts', 'Unverified MyAmeria internal transfer type')
+  const depositTransfer = credit?.type === 'deposit' && (type === 'deposit:replenishment' || type === 'deposit:capitalization')
+  console.assert(type === 'exchange' || type === 'transfer:between-own-accounts' || depositTransfer, 'Unverified MyAmeria internal transfer type')
   if (debit === undefined || credit === undefined) throw new Error('MyAmeria internal transfer account is missing')
   const other = direction === 'EXPENSE' ? credit : debit
   const otherValue = debit.instrument === credit.instrument
